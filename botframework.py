@@ -140,6 +140,7 @@ class BotFramework(ErrBot):
         self._emulator_mode = self._appId is None or self._appPassword is None
 
         self.bot_identifier = None
+        self.default_conversation = None
 
     def _set_bot_identifier(self, identifier):
         self.bot_identifier = identifier
@@ -152,7 +153,13 @@ class BotFramework(ErrBot):
         return self._token.access_token
 
     def _build_reply(self, msg):
-        conversation = msg.extras['conversation']
+        log.debug("Debug reply message")
+        log.debug(msg)
+        log.debug(msg.extras)
+        if 'conversation' in msg.extras:
+            conversation = msg.extras['conversation']
+        else:
+            conversation = self.default_conversation
         payload = {
             'type': 'message',
             'conversation': conversation.conversation,
@@ -161,6 +168,7 @@ class BotFramework(ErrBot):
             'replyToId': conversation.conversation_id,
             'text': msg.body
         }
+        log.debug(payload)
         return activity(conversation.reply_url, payload)
 
     def _build_feedback(self, msg):
@@ -257,13 +265,23 @@ class BotFramework(ErrBot):
             req = request.json
             log.debug('received request: type=[%s] channel=[%s]',
                       req['type'], req['channelId'])
+            log.debug(req)
             if req['type'] == 'message':
                 msg = Message(req['text'])
                 msg.frm = errbot.build_identifier(req['from'])
                 msg.to = errbot.build_identifier(req['recipient'])
                 msg.extras['conversation'] = errbot.build_conversation(req)
-
                 errbot._set_bot_identifier(msg.to)
-
+                self._set_bot_identifier(msg.to)
+                self.default_conversation = errbot.build_conversation(req)
                 errbot.send_feedback(msg)
                 errbot.callback_message(msg)
+
+            elif req['type'] == 'conversationUpdate' or req['type'] == 'contactRelationUpdate':
+                bot_identifier = errbot.build_identifier(req['recipient'])
+                errbot._set_bot_identifier(bot_identifier)
+                self._set_bot_identifier(bot_identifier)
+                conversation = errbot.build_conversation(req)
+                errbot.default_conversation = conversation
+                self.default_conversation = conversation
+                # log.debug("Bot identifier:", errbot.bot_identifier.userid)
