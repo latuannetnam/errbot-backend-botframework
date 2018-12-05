@@ -1,5 +1,4 @@
 # Bot Framework Backend for ErrBot
-
 Backend for [Bot Framework](https://botframework.com) that brings ErrBot to the channels: 
   * Microsoft Teams
   * Skype (COM component is not required anymore)
@@ -47,3 +46,4 @@ Final steps:
  * Add channels 
  * Enjoy
  
+Guide for developming backends: http://errbot.io/en/latest/user_guide/backend_development/index.html
