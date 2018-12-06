@@ -15,26 +15,24 @@ from errbot.backends.base import Message, Person
 log = logging.getLogger('errbot.backends.botframework')
 authtoken = namedtuple('AuthToken', 'access_token, expired_at')
 activity = namedtuple('Activity', 'post_url, payload')
+CHANNEL_LIST = 'CHANNEL_LIST'
 
-channel_list = {
-    "skype": {
-        "serviceUrl": "https://smba.trafficmanager.net/apis",
-        "bot_identifier": {
-            "id": "28:424ae5c1-d009-407a-b887-3c2e491c71b7",
-            "name": "netnammonbot"
-        },
-    },
-    "telegram": {
-        "serviceUrl": "https://telegram.botframework.com",
-        "bot_identifier": {
-            "id": "netnammonbot",
-            "name": "mybot_latuan"
-        },
-    },
-    "emulator": {
-        "serviceUrl": "",
-    }
-}
+# channel_list = {
+#     "skype": {
+#         "serviceUrl": "https://smba.trafficmanager.net/apis",
+#         "bot_identifier": {
+#             "id": "28:424ae5c1-d009-407a-b887-3c2e491c71b7",
+#             "name": "netnammonbot"
+#         },
+#     },
+#     "telegram": {
+#         "serviceUrl": "https://telegram.botframework.com",
+#         "bot_identifier": {
+#             "id": "netnammonbot",
+#             "name": "mybot_latuan"
+#         },
+#     },
+# }
 
 
 def from_now(seconds):
@@ -69,7 +67,7 @@ class Conversation:
         https://docs.microsoft.com/en-us/bot-framework/rest-api/bot-framework-rest-connector-api-reference#activity-object
     """
 
-    def __init__(self, conversation):
+    def __init__(self, conversation=None):
         self._conversation = conversation
 
     @property
@@ -87,6 +85,10 @@ class Conversation:
     @property
     def service_url(self):
         return self._conversation['serviceUrl']
+
+    @property
+    def user(self):
+        return Identifier(self._conversation['from'])
 
     @property
     def reply_url(self):
@@ -148,10 +150,10 @@ class Identifier(Person):
 
 
 class Channel:
-    def __init__(self, serviceUrl, bot_identifier, conversation=None):
+    def __init__(self, serviceUrl, bot_identifier):
         self.serviceUrl = serviceUrl
         self.bot_identifier = bot_identifier
-        self.conversaion = conversation
+        self.conversation_list = {}
 
 
 class ConversationFlow:
@@ -188,39 +190,25 @@ class BotFramework(ErrBot):
 
     def __init__(self, config):
         super(BotFramework, self).__init__(config)
-
         identity = config.BOT_IDENTITY
+        if hasattr(config, "BOTFRAMEWORK"):
+            self.botframework = config.BOTFRAMEWORK
+            log.debug("botframework:%s", json.dumps(
+                self.botframework, indent=4))
         self._appId = identity.get('appId', None)
         self._appPassword = identity.get('appPassword', None)
         self._token = None
         self._emulator_mode = self._appId is None or self._appPassword is None
         self.bot_identifier = None
-        if 'CHANNEL_LIST' in self:
-            self.channel_list = self['CHANNEL_LIST']
-            log.debug("channel_list:[%s]", self.channel_list)
-        else:
-            log.debug("Init channel list")
-            self.channel_list = {}
-            self.channel_list["skype"] = Channel(serviceUrl="https://smba.trafficmanager.net/apis",
-                                                 bot_identifier=Identifier(
-                                                     {
-                                                         "id": "28:424ae5c1-d009-407a-b887-3c2e491c71b7",
-                                                         "name": "netnammonbot"
-                                                     }
-                                                 )
-                                                 )
-            self.channel_list["telegram"] = Channel(serviceUrl="https://telegram.botframework.com",
-                                                    bot_identifier=Identifier(
-                                                        {
-                                                            "id": "netnammonbot",
-                                                            "name": "mybot_latuan"
-                                                        }
-                                                    )
-                                                    )
-            self['CHANNEL_LIST'] = self.channel_list
+        log.debug("Done init backend")
 
     def _set_bot_identifier(self, identifier):
         self.bot_identifier = identifier
+
+    def get_bot_identifier(self, channel_id):
+        if channel_id not in self.channel_list:
+            return None
+        return self.channel_list[channel_id].bot_identifier
 
     def _ensure_token(self):
         """Keep OAuth token valid"""
@@ -230,9 +218,9 @@ class BotFramework(ErrBot):
         return self._token.access_token
 
     def _build_reply(self, msg):
-
-        log.debug("reply message:[%s]", msg)
-        log.debug("reply msg extra:[%s", msg.extras)
+        log.debug("calling self._build_reply:%s", msg)
+        # log.debug("reply message:[%s]", msg)
+        # log.debug("reply msg extra:[%s", msg.extras)
         payload = {}
         if 'conversation' in msg.extras:
             conversation = msg.extras['conversation']
@@ -244,21 +232,15 @@ class BotFramework(ErrBot):
                 'replyToId': conversation.conversation_id,
                 'text': msg.body
             }
-            log.debug("reply url:[%s]", conversation.reply_url)
+            # log.debug("reply url:[%s]", conversation.reply_url)
+            # log.debug("payload:[%s]", payload)
+            return activity(conversation.reply_url, payload)
         else:
-            payload = {
-                'type': 'message',
-                'conversation': conversation.conversation,
-                'from': msg.to.subject,
-                'recipient': msg.frm.subject,
-                'replyToId': "",
-                'text': msg.body
-            }
-        log.debug("payload:[%s]", payload)
-
-        return activity(conversation.reply_url, payload)
+            log.debug("Can not determine conversation")
+            return None
 
     def _build_feedback(self, msg):
+        log.debug("Calling self._build_feedback")
         conversation = msg.extras['conversation']
         payload = {
             'type': 'typing',
@@ -269,6 +251,7 @@ class BotFramework(ErrBot):
         return activity(conversation.reply_url, payload)
 
     def _send_reply(self, response):
+        log.debug("Calling self._send_reply")
         """Post response to callback url
 
         Send a reply to URL indicated in serviceUrl from
@@ -292,8 +275,9 @@ class BotFramework(ErrBot):
 
         r.raise_for_status()
 
-    def send_create_conversation(self, channel_id, channel_user_id):
-        conversion_flow = ConversationFlow(channel_id, channel_user_id)
+    def _create_conversation(self, channel_id, channel_userid):
+        if channel_id not in self.channel_list:
+            return None
         headers = {
             'Content-Type': 'application/json'
         }
@@ -301,14 +285,47 @@ class BotFramework(ErrBot):
         if not self._emulator_mode:
             access_token = self._ensure_token()
             headers['Authorization'] = 'Bearer ' + access_token
-        response = conversion_flow.create_conversation()
+
+        request_url = urljoin(
+            self.channel_list[channel_id].serviceUrl, "/v3/conversations")
+        bot_identifier = self.channel_list[channel_id].bot_identifier
+        payload = {
+            "bot": {
+                "id:": bot_identifier.userid,
+            },
+            "isGroup": False,
+            "members": [{
+                "id": channel_userid,
+                "name": "User"
+            }],
+            "topicName": "Proactive conversation",
+        }
         r = requests.post(
-            response.post_url,
-            data=json.dumps(response.payload),
+            request_url,
+            data=json.dumps(payload),
             headers=headers
         )
 
         log.debug("result:[%s]", r)
+        if (r.status_code == 200):
+            json_data = r.json()
+            conversation_id = json_data["id"]
+            req = {
+                "serviceUrl": self.channel_list[channel_id].serviceUrl,
+                "conversation": {
+                    "id": conversation_id
+                },
+                "id": conversation_id,
+                "from": {
+                    "name": "User",
+                    "id": channel_userid
+                },
+            }
+            conversation = self.build_conversation(req)
+            self.channel_list[channel_id].conversation_list[channel_userid] = conversation
+            log.debug("Conversation:%s created for channel:%s and user:%s",
+                      conversation_id, channel_id, channel_userid)
+
         r.raise_for_status()
 
     def get_conversations(self, channel_id):
@@ -332,8 +349,28 @@ class BotFramework(ErrBot):
             log.warn("Warning:%s. Message:%s", r.status_code, r.text)
         r.raise_for_status()
 
+    def _init_default(self):
+        log.debug("Init default variables")
+        channel_list = self.botframework.get("channel_list", {})
+        if CHANNEL_LIST in self:
+            self.channel_list = self[CHANNEL_LIST]
+            log.debug("channel_list:%s", self.channel_list)
+        else:
+            log.debug("Init channel list")
+            self.channel_list = {}
+            for channel_name in channel_list:
+                channel = channel_list[channel_name]
+                self.channel_list[channel_name] = Channel(serviceUrl=channel["serviceUrl"],
+                                                          bot_identifier=Identifier(
+                    {
+                        "id": channel["bot_identifier"]["id"],
+                    }
+                )
+                )
+                self[CHANNEL_LIST] = self.channel_list
+
     def serve_forever(self):
-        log.debug("Got new connection")
+        self._init_default()
         self._init_handler(self)
         self.connect_callback()
 
@@ -347,14 +384,17 @@ class BotFramework(ErrBot):
             self.shutdown()
 
     def send_message(self, msg):
+        log.debug("Calling self.send_message:%s", msg)
         response = self._build_reply(msg)
-        self._send_reply(response)
+        if response is not None:
+            self._send_reply(response)
         super(BotFramework, self).send_message(msg)
 
     def build_identifier(self, user):
         return Identifier(user)
 
     def build_reply(self, msg, text=None, private=False, threaded=False):
+        log.debug("Calling self.build_reply")
         return Message(
             body=text,
             parent=msg,
@@ -364,6 +404,7 @@ class BotFramework(ErrBot):
         )
 
     def send_feedback(self, msg):
+        log.debug("Calling self.send_feedback")
         feedback = self._build_feedback(msg)
         self._send_reply(feedback)
 
@@ -396,58 +437,24 @@ class BotFramework(ErrBot):
             log.debug(json.dumps(req, indent=4))
             if req['type'] == 'message':
                 msg = Message(req['text'])
-                msg.frm = self.build_identifier(req['from'])
-                msg.to = self.build_identifier(req['recipient'])
-                msg.extras['conversation'] = self.build_conversation(req)
-                self._set_bot_identifier(msg.to)
-                if "channelId" in req and req["channelId"] in channel_list:
-                    channel_id = req["channelId"]
-                    channel_list[channel_id]["serviceUrl"] = req["serviceUrl"]
-                    channel_list[channel_id]["bot_identifier"] = {
-                        "id": self.bot_identifier.userid,
-                        "name": self.bot_identifier.person
-                    }
-                    log.debug("channel:[%s] content:[%s]", channel_id,
-                              json.dumps(channel_list[channel_id], indent=4))
-                self.send_feedback(msg)
-                self.callback_message(msg)
+            else:
+                msg = Message()
+            msg.frm = self.build_identifier(req['from'])
+            msg.to = self.build_identifier(req['recipient'])
+            msg.extras['conversation'] = self.build_conversation(req)
+            bot_identifier = msg.to
+            self._set_bot_identifier(msg.to)
+            if "channelId" in req:
+                channel_id = req["channelId"]
+                if channel_id not in self.channel_list:
+                    log.debug("init channel:%s", channel_id)
+                    channel = Channel(req["serviceUrl"], msg.to)
+                else:
+                    channel = self.channel_list[channel_id]
+                    channel.serviceUrl = req["serviceUrl"]
+                channel.conversation_list[msg.frm.userid] = msg.extras['conversation']
+                self.channel_list[channel_id] = channel
+                self[CHANNEL_LIST] = self.channel_list
 
-            elif req['type'] == 'conversationUpdate' or req['type'] == 'contactRelationUpdate':
-                bot_identifier = self.build_identifier(req['recipient'])
-                self._set_bot_identifier(bot_identifier)
-                conversation = self.build_conversation(req)
-                if "channelId" in req and req["channelId"] in channel_list:
-                    channel_id = req["channelId"]
-                    channel_list[channel_id]["serviceUrl"] = req["serviceUrl"]
-                    channel_list[channel_id]["bot_identifier"] = {
-                        "id": self.bot_identifier.userid,
-                        "name": self.bot_identifier.person
-                    }
-                    log.debug("channel:[%s] content:[%s]", channel_id,
-                              json.dumps(channel_list[channel_id], indent=4))
-
-        @bottle_app.route('/botframework_old', method=['POST'])
-        def post_botframework_old():
-            req = request.json
-            log.debug('received request: type=[%s] channel=[%s]',
-                      req['type'], req['channelId'])
-            log.debug(json.dumps(req, indent=4))
-            if req['type'] == 'message':
-                msg = Message(req['text'])
-                msg.frm = errbot.build_identifier(req['from'])
-                msg.to = errbot.build_identifier(req['recipient'])
-                msg.extras['conversation'] = errbot.build_conversation(req)
-                errbot._set_bot_identifier(msg.to)
-                self._set_bot_identifier(msg.to)
-                self.default_conversation = errbot.build_conversation(req)
-                errbot.send_feedback(msg)
-                errbot.callback_message(msg)
-
-            elif req['type'] == 'conversationUpdate' or req['type'] == 'contactRelationUpdate':
-                bot_identifier = errbot.build_identifier(req['recipient'])
-                errbot._set_bot_identifier(bot_identifier)
-                self._set_bot_identifier(bot_identifier)
-                conversation = errbot.build_conversation(req)
-                errbot.default_conversation = conversation
-                self.default_conversation = conversation
-                # log.debug("Bot identifier:", errbot.bot_identifier.userid)
+            self.send_feedback(msg)
+            self.callback_message(msg)
