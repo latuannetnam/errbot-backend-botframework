@@ -13,6 +13,7 @@ from errbot.core_plugins.wsview import bottle_app
 from errbot.backends.base import Message, Person
 
 log = logging.getLogger('errbot.backends.botframework')
+
 authtoken = namedtuple('AuthToken', 'access_token, expired_at')
 activity = namedtuple('Activity', 'post_url, payload')
 CHANNEL_LIST = 'CHANNEL_LIST'
@@ -195,6 +196,8 @@ class BotFramework(ErrBot):
             self.botframework = config.BOTFRAMEWORK
             log.debug("botframework:%s", json.dumps(
                 self.botframework, indent=4))
+        else:
+            self.botframework = None
         self._appId = identity.get('appId', None)
         self._appPassword = identity.get('appPassword', None)
         self._token = None
@@ -232,11 +235,11 @@ class BotFramework(ErrBot):
                 'replyToId': conversation.conversation_id,
                 'text': msg.body
             }
-            # log.debug("reply url:[%s]", conversation.reply_url)
-            # log.debug("payload:[%s]", payload)
+            log.debug("reply url:[%s]", conversation.reply_url)
+            log.debug("payload:[%s]", payload)
             return activity(conversation.reply_url, payload)
         else:
-            log.debug("Can not determine conversation")
+            log.warn("Can not determine conversation")
             return None
 
     def _build_feedback(self, msg):
@@ -325,6 +328,7 @@ class BotFramework(ErrBot):
             self.channel_list[channel_id].conversation_list[channel_userid] = conversation
             log.debug("Conversation:%s created for channel:%s and user:%s",
                       conversation_id, channel_id, channel_userid)
+            return conversation
 
         r.raise_for_status()
 
@@ -351,7 +355,11 @@ class BotFramework(ErrBot):
 
     def _init_default(self):
         log.debug("Init default variables")
-        channel_list = self.botframework.get("channel_list", {})
+        if self.botframework is None:
+            channel_list = {}
+        else:
+            channel_list = self.botframework.get("channel_list", {})
+
         if CHANNEL_LIST in self:
             self.channel_list = self[CHANNEL_LIST]
             log.debug("channel_list:%s", self.channel_list)
@@ -385,6 +393,21 @@ class BotFramework(ErrBot):
 
     def send_message(self, msg):
         log.debug("Calling self.send_message:%s", msg)
+        log.debug("message extras:%s", msg.extras)
+        log.debug("to:%s", msg.to.userid)
+        if 'conversation' not in msg.extras:
+            
+            channel_id, channel_userid = msg.to.userid.split(".")
+            log.debug("Build conversation for channel:%s and user:%s", channel_id, channel_userid)
+            if channel_id is not None and channel_userid is not None:
+                if channel_id in self.channel_list and channel_userid in self.channel_list[channel_id].conversation_list:
+                    conversation = self.channel_list[channel_id].conversation_list[channel_userid]
+                else:
+                    conversation = self._create_conversation(
+                        channel_id, channel_userid)
+                msg.extras['conversation'] = conversation
+                msg.to = self.build_identifier({"id": channel_userid})
+
         response = self._build_reply(msg)
         if response is not None:
             self._send_reply(response)
@@ -448,10 +471,14 @@ class BotFramework(ErrBot):
                 channel_id = req["channelId"]
                 if channel_id not in self.channel_list:
                     log.debug("init channel:%s", channel_id)
+                    log.debug("bot identifier:%s", msg.to)
                     channel = Channel(req["serviceUrl"], msg.to)
                 else:
                     channel = self.channel_list[channel_id]
-                    channel.serviceUrl = req["serviceUrl"]
+                    if channel.serviceUrl != req["serviceUrl"]:
+                        channel.serviceUrl = req["serviceUrl"]
+                        log.debug("update serviceUrl:%s for channel:%s",
+                                  channel.serviceUrl, channel_id)
                 channel.conversation_list[msg.frm.userid] = msg.extras['conversation']
                 self.channel_list[channel_id] = channel
                 self[CHANNEL_LIST] = self.channel_list
