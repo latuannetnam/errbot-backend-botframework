@@ -97,6 +97,13 @@ class Conversation:
             self.conversation_id,
             self.activity_id
         )
+        return urljoin(self.service_url, url)
+
+    @property
+    def send_url(self):
+        url = '/v3/conversations/{}/activities'.format(
+            self.conversation_id
+        )
 
         return urljoin(self.service_url, url)
 
@@ -157,33 +164,33 @@ class Channel:
         self.conversation_list = {}
 
 
-class ConversationFlow:
-    def __init__(self, channel_id, channel_userid):
-        self.conversation = None
-        self.channel_id = channel_id
-        self.channel_userid = channel_userid
+# class ConversationFlow:
+#     def __init__(self, channel_id, channel_userid):
+#         self.conversation = None
+#         self.channel_id = channel_id
+#         self.channel_userid = channel_userid
 
-    def create_conversation(self):
-        bot_identifier = channel_list[self.channel_id]["bot_identifier"]
-        log.debug("bot_identifier:[%s]", bot_identifier)
-        payload = {
-            "bot": {
-                "id:": bot_identifier["id"],
-                "name": bot_identifier["name"],
-            },
-            "isGroup": False,
-            "members": [{
-                "id": self.channel_userid,
-                "name": "User"
-            }],
-            "topicName": "Proactive conversation",
-            # "activity": {
-            # }
-        }
-        log.debug("create conversation payload:[%s]", payload)
-        request_url = urljoin(
-            channel_list[self.channel_id]["serviceUrl"], "/v3/conversations")
-        return activity(request_url, payload)
+#     def create_conversation(self):
+#         bot_identifier = channel_list[self.channel_id]["bot_identifier"]
+#         log.debug("bot_identifier:[%s]", bot_identifier)
+#         payload = {
+#             "bot": {
+#                 "id:": bot_identifier["id"],
+#                 "name": bot_identifier["name"],
+#             },
+#             "isGroup": False,
+#             "members": [{
+#                 "id": self.channel_userid,
+#                 "name": "User"
+#             }],
+#             "topicName": "Proactive conversation",
+#             # "activity": {
+#             # }
+#         }
+#         log.debug("create conversation payload:[%s]", payload)
+#         request_url = urljoin(
+#             channel_list[self.channel_id]["serviceUrl"], "/v3/conversations")
+#         return activity(request_url, payload)
 
 
 class BotFramework(ErrBot):
@@ -253,6 +260,28 @@ class BotFramework(ErrBot):
         }
         return activity(conversation.reply_url, payload)
 
+    def _build_send(self, msg):
+        log.debug("calling self._build_send:%s", msg)
+        # log.debug("reply message:[%s]", msg)
+        # log.debug("reply msg extra:[%s", msg.extras)
+        payload = {}
+        if 'conversation' in msg.extras:
+            conversation = msg.extras['conversation']
+            payload = {
+                'type': 'message',
+                'conversation': conversation.conversation,
+                'from': msg.frm.subject,
+                'recipient': msg.to.subject,
+                'replyToId': conversation.conversation_id,
+                'text': msg.body
+            }
+            log.debug("send url:[%s]", conversation.send_url)
+            log.debug("payload:[%s]", payload)
+            return activity(conversation.send_url, payload)
+        else:
+            log.warn("Can not determine conversation")
+            return None
+
     def _send_reply(self, response):
         log.debug("Calling self._send_reply")
         """Post response to callback url
@@ -275,11 +304,14 @@ class BotFramework(ErrBot):
             data=json.dumps(response.payload),
             headers=headers
         )
-
+        
+        if r.status_code >= 400:
+            log.warn("Can not send message. Error:%s. Message:%s", r.status_code, r.text)
         r.raise_for_status()
 
     def _create_conversation(self, channel_id, channel_userid):
         if channel_id not in self.channel_list:
+            log.warn("%s not in channel_list", channel_id)
             return None
         headers = {
             'Content-Type': 'application/json'
@@ -296,13 +328,16 @@ class BotFramework(ErrBot):
             "bot": {
                 "id:": bot_identifier.userid,
             },
-            "isGroup": False,
+            # "isGroup": False,
             "members": [{
                 "id": channel_userid,
                 "name": "User"
             }],
             "topicName": "Proactive conversation",
         }
+
+        log.debug("request url:%s", request_url)
+        log.debug("playload:%s", payload)
         r = requests.post(
             request_url,
             data=json.dumps(payload),
@@ -310,7 +345,7 @@ class BotFramework(ErrBot):
         )
 
         log.debug("result:[%s]", r)
-        if (r.status_code == 200):
+        if 200 <= r.status_code <= 300:
             json_data = r.json()
             conversation_id = json_data["id"]
             req = {
@@ -329,6 +364,9 @@ class BotFramework(ErrBot):
             log.debug("Conversation:%s created for channel:%s and user:%s",
                       conversation_id, channel_id, channel_userid)
             return conversation
+        else:
+            log.warn("Can not create conversation. Error:%s. Message:%s",
+                     r.status_code, r.text)
 
         r.raise_for_status()
 
@@ -346,7 +384,8 @@ class BotFramework(ErrBot):
             get_url,
             headers=headers
         )
-        if (r.status_code == 200):
+        
+        if 200 <= r.status_code <= 300:
             # results = r.json()['results']
             log.debug("result:[%s]", r)
         else:
@@ -360,7 +399,7 @@ class BotFramework(ErrBot):
         else:
             channel_list = self.botframework.get("channel_list", {})
 
-        if CHANNEL_LIST in self:
+        if 'CHANNEL_LIST1' in self:
             self.channel_list = self[CHANNEL_LIST]
             log.debug("channel_list:%s", self.channel_list)
         else:
@@ -372,6 +411,7 @@ class BotFramework(ErrBot):
                                                           bot_identifier=Identifier(
                     {
                         "id": channel["bot_identifier"]["id"],
+                        "name": channel["bot_identifier"]["name"],
                     }
                 )
                 )
@@ -395,20 +435,27 @@ class BotFramework(ErrBot):
         log.debug("Calling self.send_message:%s", msg)
         log.debug("message extras:%s", msg.extras)
         log.debug("to:%s", msg.to.userid)
+        response = None
         if 'conversation' not in msg.extras:
-            
             channel_id, channel_userid = msg.to.userid.split(".")
-            log.debug("Build conversation for channel:%s and user:%s", channel_id, channel_userid)
+            log.debug("Build conversation for channel:%s and user:%s",
+                      channel_id, channel_userid)
             if channel_id is not None and channel_userid is not None:
                 if channel_id in self.channel_list and channel_userid in self.channel_list[channel_id].conversation_list:
                     conversation = self.channel_list[channel_id].conversation_list[channel_userid]
                 else:
+                    log.debug(
+                        "Create converation for channel %s and user %s", channel_id, channel_userid)
                     conversation = self._create_conversation(
                         channel_id, channel_userid)
-                msg.extras['conversation'] = conversation
-                msg.to = self.build_identifier({"id": channel_userid})
+                if conversation is not None:
+                    msg.extras['conversation'] = conversation
+                    msg.to = self.build_identifier({"id": channel_userid})
+                    msg.frm = self.channel_list[channel_id].bot_identifier
+                    response = self._build_send(msg)
+        else:
+            response = self._build_reply(msg)
 
-        response = self._build_reply(msg)
         if response is not None:
             self._send_reply(response)
         super(BotFramework, self).send_message(msg)
