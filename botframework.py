@@ -398,24 +398,18 @@ class BotFramework(ErrBot):
             channel_list = {}
         else:
             channel_list = self.botframework.get("channel_list", {})
-
-        if 'CHANNEL_LIST1' in self:
-            self.channel_list = self[CHANNEL_LIST]
-            log.debug("channel_list:%s", self.channel_list)
-        else:
-            log.debug("Init channel list")
-            self.channel_list = {}
-            for channel_name in channel_list:
-                channel = channel_list[channel_name]
-                self.channel_list[channel_name] = Channel(serviceUrl=channel["serviceUrl"],
-                                                          bot_identifier=Identifier(
-                    {
-                        "id": channel["bot_identifier"]["id"],
-                        "name": channel["bot_identifier"]["name"],
-                    }
-                )
-                )
-                self[CHANNEL_LIST] = self.channel_list
+        log.debug("Init channel list")
+        self.channel_list = {}
+        for channel_name in channel_list:
+            channel = channel_list[channel_name]
+            self.channel_list[channel_name] = Channel(serviceUrl=channel["serviceUrl"],
+                                                        bot_identifier=Identifier(
+                {
+                    "id": channel["bot_identifier"]["id"],
+                    "name": channel["bot_identifier"]["name"],
+                }
+            )
+            )
 
     def serve_forever(self):
         self._init_default()
@@ -505,7 +499,7 @@ class BotFramework(ErrBot):
             log.debug('received request: type=[%s] channel=[%s]',
                       req['type'], req['channelId'])
             log.debug(json.dumps(req, indent=4))
-            if req['type'] == 'message':
+            if (req['type'] == 'message') and ('text' in req):
                 msg = Message(req['text'])
             else:
                 msg = Message()
@@ -514,7 +508,11 @@ class BotFramework(ErrBot):
             msg.extras['conversation'] = self.build_conversation(req)
             bot_identifier = msg.to
             self._set_bot_identifier(msg.to)
-            if "channelId" in req:
+            isGroup = False
+            if "isGroup" in req["conversation"]: 
+                isGroup = req["conversation"]["isGroup"]
+            log.debug("isGroup:{}".format(isGroup))    
+            if "channelId" in req and isGroup is False:
                 channel_id = req["channelId"]
                 if channel_id not in self.channel_list:
                     log.debug("init channel:%s", channel_id)
@@ -528,7 +526,6 @@ class BotFramework(ErrBot):
                                   channel.serviceUrl, channel_id)
                 channel.conversation_list[msg.frm.userid] = msg.extras['conversation']
                 self.channel_list[channel_id] = channel
-                self[CHANNEL_LIST] = self.channel_list
 
-            self.send_feedback(msg)
-            self.callback_message(msg)
+            # self.send_feedback(msg)
+            # self.callback_message(msg)
