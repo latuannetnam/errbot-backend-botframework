@@ -527,5 +527,5 @@ class BotFramework(ErrBot):
                 channel.conversation_list[msg.frm.userid] = msg.extras['conversation']
                 self.channel_list[channel_id] = channel
 
-            # self.send_feedback(msg)
-            # self.callback_message(msg)
+            self.send_feedback(msg)
+            self.callback_message(msg)
