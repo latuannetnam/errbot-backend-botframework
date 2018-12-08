@@ -52,11 +52,17 @@ def auth(appId, appPasswd):
     r = requests.post(
         'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token',
         data=form
-    ).json()
-
-    expires_in = r['expires_in']
+    )
+    log.debug("Auth status code:{}". format(r.status_code))
+    if r.status_code > 400:
+        log.warn("Can not Authenticate. Error:%s. Message:%s",
+                 r.status_code, r.text)
+        return None
+    auth_req = r.json()    
+    log.debug("Authentication response:{}".format(auth_req))
+    expires_in = auth_req['expires_in']
     expired_at = from_now(expires_in)
-    token = authtoken(r['access_token'], expired_at)
+    token = authtoken(auth_req['access_token'], expired_at)
 
     return token
 
@@ -162,35 +168,6 @@ class Channel:
         self.serviceUrl = serviceUrl
         self.bot_identifier = bot_identifier
         self.conversation_list = {}
-
-
-# class ConversationFlow:
-#     def __init__(self, channel_id, channel_userid):
-#         self.conversation = None
-#         self.channel_id = channel_id
-#         self.channel_userid = channel_userid
-
-#     def create_conversation(self):
-#         bot_identifier = channel_list[self.channel_id]["bot_identifier"]
-#         log.debug("bot_identifier:[%s]", bot_identifier)
-#         payload = {
-#             "bot": {
-#                 "id:": bot_identifier["id"],
-#                 "name": bot_identifier["name"],
-#             },
-#             "isGroup": False,
-#             "members": [{
-#                 "id": self.channel_userid,
-#                 "name": "User"
-#             }],
-#             "topicName": "Proactive conversation",
-#             # "activity": {
-#             # }
-#         }
-#         log.debug("create conversation payload:[%s]", payload)
-#         request_url = urljoin(
-#             channel_list[self.channel_id]["serviceUrl"], "/v3/conversations")
-#         return activity(request_url, payload)
 
 
 class BotFramework(ErrBot):
@@ -304,9 +281,10 @@ class BotFramework(ErrBot):
             data=json.dumps(response.payload),
             headers=headers
         )
-        
+
         if r.status_code >= 400:
-            log.warn("Can not send message. Error:%s. Message:%s", r.status_code, r.text)
+            log.warn("Can not send message. Error:%s. Message:%s",
+                     r.status_code, r.text)
         r.raise_for_status()
 
     def _create_conversation(self, channel_id, channel_userid):
@@ -326,14 +304,15 @@ class BotFramework(ErrBot):
         bot_identifier = self.channel_list[channel_id].bot_identifier
         payload = {
             "bot": {
-                "id:": bot_identifier.userid,
+                "id": bot_identifier.userid,
+                # "name": bot_identifier.person
             },
             # "isGroup": False,
             "members": [{
                 "id": channel_userid,
-                "name": "User"
+                # "name": "User"
             }],
-            "topicName": "Proactive conversation",
+            # "topicName": "Proactive conversation",
         }
 
         log.debug("request url:%s", request_url)
@@ -384,7 +363,7 @@ class BotFramework(ErrBot):
             get_url,
             headers=headers
         )
-        
+
         if 200 <= r.status_code <= 300:
             # results = r.json()['results']
             log.debug("result:[%s]", r)
@@ -403,7 +382,7 @@ class BotFramework(ErrBot):
         for channel_name in channel_list:
             channel = channel_list[channel_name]
             self.channel_list[channel_name] = Channel(serviceUrl=channel["serviceUrl"],
-                                                        bot_identifier=Identifier(
+                                                      bot_identifier=Identifier(
                 {
                     "id": channel["bot_identifier"]["id"],
                     "name": channel["bot_identifier"]["name"],
@@ -509,9 +488,9 @@ class BotFramework(ErrBot):
             bot_identifier = msg.to
             self._set_bot_identifier(msg.to)
             isGroup = False
-            if "isGroup" in req["conversation"]: 
+            if "isGroup" in req["conversation"]:
                 isGroup = req["conversation"]["isGroup"]
-            log.debug("isGroup:{}".format(isGroup))    
+            log.debug("isGroup:{}".format(isGroup))
             if "channelId" in req and isGroup is False:
                 channel_id = req["channelId"]
                 if channel_id not in self.channel_list:
