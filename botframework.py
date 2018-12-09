@@ -58,8 +58,8 @@ def auth(appId, appPasswd):
         log.warn("Can not Authenticate. Error:%s. Message:%s",
                  r.status_code, r.text)
         return None
-    auth_req = r.json()    
-    log.debug("Authentication response:{}".format(auth_req))
+    auth_req = r.json()
+    # log.debug("Authentication response:{}".format(auth_req))
     expires_in = auth_req['expires_in']
     expired_at = from_now(expires_in)
     token = authtoken(auth_req['access_token'], expired_at)
@@ -98,6 +98,10 @@ class Conversation:
         return Identifier(self._conversation['from'])
 
     @property
+    def channel(self):
+        return self._conversation['channelId']
+
+    @property
     def reply_url(self):
         url = '/v3/conversations/{}/activities/{}'.format(
             self.conversation_id,
@@ -115,7 +119,7 @@ class Conversation:
 
 
 class Identifier(Person):
-    def __init__(self, obj_or_json):
+    def __init__(self, obj_or_json, channel=None):
         if isinstance(obj_or_json, str):
             subject = json.loads(obj_or_json)
         else:
@@ -124,11 +128,16 @@ class Identifier(Person):
         self._subject = subject
         self._id = subject.get('id', '<not found>')
         self._name = subject.get('name', '<not found>')
+        if channel is not None:
+            self._channel = channel
+        else:
+            self._channel = None
 
     def __str__(self):
         return json.dumps({
             'id': self._id,
-            'name': self._name
+            'name': self._name,
+            'channel': self._channel
         })
 
     def __eq__(self, other):
@@ -161,6 +170,10 @@ class Identifier(Person):
     @property
     def client(self):
         return '<not set>'
+    
+    @property
+    def channel(self):
+        return self._channel
 
 
 class Channel:
@@ -433,8 +446,11 @@ class BotFramework(ErrBot):
             self._send_reply(response)
         super(BotFramework, self).send_message(msg)
 
-    def build_identifier(self, user):
-        return Identifier(user)
+    def build_identifier(self, user, channel=None):
+        if channel is not None:
+            return Identifier(user, channel)
+        else:
+            return Identifier(user)
 
     def build_reply(self, msg, text=None, private=False, threaded=False):
         log.debug("Calling self.build_reply")
@@ -482,8 +498,11 @@ class BotFramework(ErrBot):
                 msg = Message(req['text'])
             else:
                 msg = Message()
-            msg.frm = self.build_identifier(req['from'])
-            msg.to = self.build_identifier(req['recipient'])
+            channel_id = None
+            if "channelId" in req:
+                channel_id = req["channelId"]
+            msg.frm = self.build_identifier(req['from'], channel_id)
+            msg.to = self.build_identifier(req['recipient'], channel_id)
             msg.extras['conversation'] = self.build_conversation(req)
             bot_identifier = msg.to
             self._set_bot_identifier(msg.to)
@@ -491,8 +510,7 @@ class BotFramework(ErrBot):
             if "isGroup" in req["conversation"]:
                 isGroup = req["conversation"]["isGroup"]
             log.debug("isGroup:{}".format(isGroup))
-            if "channelId" in req and isGroup is False:
-                channel_id = req["channelId"]
+            if channel_id is not None and isGroup is False:
                 if channel_id not in self.channel_list:
                     log.debug("init channel:%s", channel_id)
                     log.debug("bot identifier:%s", msg.to)
