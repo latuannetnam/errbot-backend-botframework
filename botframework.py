@@ -120,11 +120,19 @@ class Conversation:
 
 class Identifier(Person):
     def __init__(self, obj_or_json, channel=None):
+        subject = None
+        
         if isinstance(obj_or_json, str):
-            subject = json.loads(obj_or_json)
+            try:
+                subject = json.loads(obj_or_json)
+            except Exception as e:
+                log.error("An exception occurred:{}". format(e))
+                log.error("While decoding for :{}". format(obj_or_json))
+            finally:
+                subject = obj_or_json
         else:
             subject = obj_or_json
-
+        
         self._subject = subject
         self._id = subject.get('id', '<not found>')
         self._name = subject.get('name', '<not found>')
